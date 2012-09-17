@@ -98,9 +98,15 @@ sub processWord () {
 sub savePageToDisk () {
    my ($file) = @_;
    my $url = "http://www.auslan.org.au/dictionary/words/$file";
-   my $outputFile = "words/".substr($file, 0, 1)."/$file";
+   my $directory = "words/".substr($file, 0, 1)."/";
+   my $outputFile = "$directory/$file";
    
    $outputFile =~ s/\s+/_/gi;
+   
+   unless (-d $directory) {
+      print STDERR "Creating directory.. $directory" . "\n";
+      mkdir ($directory);
+   }
    
    unless (-e $outputFile) { # TODO $forceRedo
       print STDERR "Saving to disk: $url" . "\n";
