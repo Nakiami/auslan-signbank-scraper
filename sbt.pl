@@ -3,10 +3,11 @@ use warnings;
 use strict;
 use File::Path qw(make_path remove_tree);
 
-# sign bank tools
+# sign bank tools, Nakiami
 
 my %words;
 my $wordsDirectory = "words/";
+my $processedDirectory = "processed/";
 my $forceRedo = 0;
 
 if (@ARGV < 2) {
@@ -37,43 +38,140 @@ if (@ARGV >= 3 && $ARGV[0] eq "scrape") {
    
       my $directory = $wordsDirectory . lc ($letter) . "/";
       
-      my @files = <$directory*>;
-      for my $file (@files) {
+      &processDirectory ($directory);
+   }
+}
+
+sub processDirectory () {
+
+   my($directory) = @_;
+   my @files = <$directory*>;
+   
+   for my $file (@files) {
+
+      my $videoURL;
+      my $signDistribution;
+      my %keyWords;
+      my %nounDef;
+      my %verbOrAdjectiveDef;
+
+      if (open (FILE, "< $file")) {
       
-         my $signDistribution;
-         my %keyWords;
-      
-         if (open (FILE, "< $file")) {
-            while (my $line = <FILE>) {
-               
-               if ($line =~ /<h4>Sign Distribution<\/h4>/) {
-               
-                  while ($line = <FILE>) {
-                     
-                     if ($line =~ /<li>(.*)<\/li>/) {
-                        $signDistribution = $1;
-                     }
-                     
-                     last if $line =~ /<\/ul>/;
+         while (my $line = <FILE>) {
+            
+            if ($line =~ /url: '(.*)',/) {
+               $videoURL = "http://auslan.org.au" . $1;
+            }
+            
+            # distribution
+            elsif ($line =~ /<h4>Sign Distribution<\/h4>/) {
+            
+               while ($line = <FILE>) {
+                  
+                  if ($line =~ /<li>(.*)<\/li>/) {
+                     $signDistribution = $1;
                   }
                   
-               } elsif ($line =~ /Keywords:/) {
-               
-                  while ($line = <FILE>) {
-                     
-                     if ($line =~ /[a-z0-9_\s]+/gi) {
-                        $keyWords{$1}; #TODO stopped here
-                     }
-                     
-                     last if $line =~ /<\/p>/;
-                  }
+                  last if $line =~ /<\/ul>/;
                }
             }
             
-         } else {
-         
-            print STDERR "Could not open file: $file : $!" . "\n";
+            # keywords
+            elsif ($line =~ /Keywords:/) {
+            
+               while ($line = <FILE>) {
+               
+                  $line =~ s/^\s*//;
+                  $line =~ s/\s*$//;
+                  
+                  if ($line =~ /^([a-z0-9_\s]+)/gi) {
+                     $keyWords{$1}++;
+                  }
+                  
+                  last if $line =~ /<\/p>/;
+               }
+            }
+            
+            # noun definitions
+            elsif ($line =~ /<h3>As a Noun<\/h3>/) {
+            
+               while ($line = <FILE>) {
+               
+                  if ($line =~ /<li>(.*)<\/li>/gi) {
+                     
+                     my $def = $1;
+                     $def =~ s/^\s+//;
+                     $def =~ s/\s+$//;
+                     
+                     $nounDef{$def}++;
+                  }
+                  
+                  last if $line =~ /<\/ol>/;
+               }
+            }
+            
+            # noun definitions
+            elsif ($line =~ /<h3>As a Verb or Adjective<\/h3>/) {
+            
+               while ($line = <FILE>) {
+               
+                  if ($line =~ /<li>(.*)<\/li>/gi) {
+                     
+                     my $def = $1;
+                     $def =~ s/^\s+//;
+                     $def =~ s/\s+$//;
+                     
+                     $verbOrAdjectiveDef{$def}++;
+                  }
+                  
+                  last if $line =~ /<\/ol>/;
+               }
+            }
          }
+         
+         my $fileName = $file;
+         $fileName =~ s/$wordsDirectory//;
+         my $outputDirectory = $processedDirectory . substr($fileName, 0, 1)."/";
+         my $outputFile = $processedDirectory . $fileName;
+         $outputFile =~ s/\.html$//;
+         
+         print STDERR $outputDirectory . "\n";
+         print STDERR $outputFile . "\n";
+         
+         unless (-d $outputDirectory) {
+            print STDERR "Creating directory.. $outputDirectory" . "\n";
+            make_path ($outputDirectory);
+         }
+         
+         unless (-e $outputFile) {
+         
+            print STDERR "Saving to disk information from: $file" . "\n";
+            if (open (OUTPUTFILE, "> $outputFile")) {
+            
+               print OUTPUTFILE "video:" . $videoURL . "\n";
+               print OUTPUTFILE "signDistribution:" . $signDistribution . "\n";
+               
+               for my $key (keys (%keyWords)) {
+                  print OUTPUTFILE "keyWord:" . $key . "\n";
+               }
+               
+               for my $key (keys (%nounDef)) {
+                  print OUTPUTFILE "noun:" . $key . "\n";
+               }
+               
+               for my $key (keys (%verbOrAdjectiveDef)) {
+                  print OUTPUTFILE "verbOrAdjective:" . $key . "\n";
+               }
+            
+            } else {
+            
+               print STDERR "Could not open file: $file : $!" . "\n";
+            }
+         }
+         
+      } else {
+      
+         print STDERR "Could not open file: $file : $!" . "\n";
       }
    }
 }
