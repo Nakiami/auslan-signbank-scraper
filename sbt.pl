@@ -8,10 +8,11 @@ use File::Path qw(make_path remove_tree);
 my %words;
 my $wordsDirectory = "words/";
 my $processedDirectory = "processed/";
+my $videoDirectory = "videos/";
 my $forceRedo = 0;
 
 if (@ARGV < 2) {
-   print STDERR "Usage: ./xx [scrape|processFiles] [a-z] [a-z] [saveToDisk]" . "\n";
+   print STDERR "Usage: ./xx [scrape|processFiles|downloadVideos] [a-z] [a-z] [printWordsOnly]" . "\n";
    exit (1);
 }
 
@@ -25,32 +26,86 @@ if (@ARGV >= 3 && $ARGV[0] eq "scrape") {
    # download all of the files
    while ((my $key, my $value) = each(%words)) {
    
-      if (@ARGV == 4 && $ARGV[3] eq "saveToDisk") {
-         &scrapeWord ($key, $value);
-      } else {
+      if (@ARGV == 4 && $ARGV[3] eq "printWordsOnly") {
          print $key . "\n";
+      } else {
+         &scrapeWord ($key, $value);
       }
    }
    
 } elsif (@ARGV >= 3 && $ARGV[0] eq "processFiles") {
 
    for my $letter ($ARGV[1]..$ARGV[2]) {
+      print STDERR "Processing ". $letter . "\n";
+      &extractInfoFromLocalFiles ($letter);
+   }
    
-      my $directory = $wordsDirectory . lc ($letter) . "/";
-      
-      &processDirectory ($directory);
+} elsif (@ARGV >= 3 && $ARGV[0] eq "downloadVideos") {
+
+   unless (-d $processedDirectory) {
+      print STDERR "You don't have any files in your output directory!";
+      exit (1);
+   }
+
+   for my $letter ($ARGV[1]..$ARGV[2]) {
+      print STDERR "Processing ". $letter . "\n";
+      &downloadVideos ($letter);
    }
 }
 
-sub processDirectory () {
+sub downloadVideos () {
 
-   my($directory) = @_;
+   my($letter) = @_;
+   
+   my $directory = $processedDirectory . lc ($letter) . "/";
    my @files = <$directory*>;
    
    for my $file (@files) {
 
       my $videoURL;
-      my $signDistribution;
+
+      if (open (FILE, "< $file")) {
+      
+         while (my $line = <FILE>) {
+            
+            if ($line =~ /^video:(.*)/) {
+               $videoURL = $1;
+               last;
+            }
+         }
+         
+         my $fileName = $file;
+         $fileName =~ s/$processedDirectory//;
+         my $outputDirectory = $videoDirectory . substr($fileName, 0, 1)."/";
+         my $outputFile = $videoDirectory . $fileName;
+         
+         unless (-d $outputDirectory) {
+            print STDERR "Creating directory.. $outputDirectory" . "\n";
+            make_path ($outputDirectory);
+         }
+         
+         unless (-e $outputFile) {
+            print STDERR "Downloading video for $fileName.." . "\n";
+            open (WGET_STREAM, "wget -O $outputFile '$videoURL' 2> /dev/null|");
+         }
+         
+      } else {
+      
+         print STDERR "Could not open file: $file : $!" . "\n";
+      }
+   }
+}
+
+sub extractInfoFromLocalFiles () {
+
+   my($letter) = @_;
+   my $directory = $wordsDirectory . lc ($letter) . "/";
+   my @files = <$directory*>;
+   
+   for my $file (@files) {
+
+      my $videoURL = "N/A";
+      my $signDistribution = "N/A";
       my %keyWords;
       my %nounDef;
       my %verbOrAdjectiveDef;
@@ -135,9 +190,6 @@ sub processDirectory () {
          my $outputFile = $processedDirectory . $fileName;
          $outputFile =~ s/\.html$//;
          
-         print STDERR $outputDirectory . "\n";
-         print STDERR $outputFile . "\n";
-         
          unless (-d $outputDirectory) {
             print STDERR "Creating directory.. $outputDirectory" . "\n";
             make_path ($outputDirectory);
@@ -182,9 +234,9 @@ sub scrapeLetter () {
    
    my $url = "http://www.auslan.org.au/dictionary/search/?query=$letter";
    
-   if (open (ROOT_CURL_STREAM, "wget -O- '$url' 2> /dev/null|")) {
+   if (open (WGET_STREAM, "wget -O- '$url' 2> /dev/null|")) {
 
-      while (my $line = <ROOT_CURL_STREAM>) {
+      while (my $line = <WGET_STREAM>) {
          if ($line =~ /query=[A-Z]&page=([0-9]+)'>[0-9]+<\//) {
             $numPages = $1;
          }
@@ -207,9 +259,9 @@ sub buildWordList () {
 
    my $url = "http://www.auslan.org.au/dictionary/search/?query=$letter&page=$page";
    
-   if (open (ROOT_CURL_STREAM, "wget -O- '$url' 2> /dev/null|")) {
+   if (open (WGET_STREAM, "wget -O- '$url' 2> /dev/null|")) {
   
-      while (my $line = <ROOT_CURL_STREAM>) {
+      while (my $line = <WGET_STREAM>) {
       
          if ($line =~ /\<a href="\/dictionary\/words\/(.+\-[0-9]+\.html)">(.+)<\/a>/gi) {
 
@@ -227,9 +279,9 @@ sub scrapeWord () {
 
    my $url = "http://www.auslan.org.au/dictionary/words/$file";
    
-   if (open (ROOT_CURL_STREAM, "wget -O- '$url' 2> /dev/null|")) {
+   if (open (WGET_STREAM, "wget -O- '$url' 2> /dev/null|")) {
 
-      while (my $line = <ROOT_CURL_STREAM>) {
+      while (my $line = <WGET_STREAM>) {
          if ($line =~ /<span class=['"]match['"]><a href=['"]$word-([0-9]+).html['"]>[0-9]+<\/a><\/span>/) {
             $numPages = $1;
          }
@@ -248,7 +300,7 @@ sub scrapeWord () {
 sub savePageToDisk () {
    my ($file) = @_;
    my $url = "http://www.auslan.org.au/dictionary/words/$file";
-   my $directory = $wordsDirectory . substr($file, 0, 1)."/";
+   my $directory = $wordsDirectory . lc (substr ($file, 0, 1))."/";
    my $outputFile = "$directory/$file";
    
    $outputFile =~ s/\s+/_/gi;
@@ -258,8 +310,8 @@ sub savePageToDisk () {
       make_path ($directory);
    }
    
-   unless (-e $outputFile) { # TODO $forceRedo
+   unless (-e $outputFile) {
       print STDERR "Saving to disk: $url" . "\n";
-      open (ROOT_CURL_STREAM, "wget -O $outputFile '$url' 2> /dev/null|");
+      open (WGET_STREAM, "wget -O $outputFile '$url' 2> /dev/null|");
    }
 }
