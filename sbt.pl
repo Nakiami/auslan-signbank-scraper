@@ -56,6 +56,7 @@ if (@ARGV >= 3 && $ARGV[0] eq "scrape") {
 sub downloadVideos () {
 
    my($letter) = @_;
+   my %videoURLs;
    
    my $directory = $processedDirectory . lc ($letter) . "/";
    my @files = <$directory*>;
@@ -69,29 +70,43 @@ sub downloadVideos () {
          while (my $line = <FILE>) {
             
             if ($line =~ /^video:(.*)/) {
-               $videoURL = $1;
+               #$videoURL = $1;
+               $videoURLs{$1}++;
                last;
             }
          }
-         
-         my $fileName = $file;
-         $fileName =~ s/$processedDirectory//;
-         my $outputDirectory = $videoDirectory . substr($fileName, 0, 1)."/";
-         my $outputFile = $videoDirectory . $fileName;
-         
-         unless (-d $outputDirectory) {
-            print STDERR "Creating directory.. $outputDirectory" . "\n";
-            make_path ($outputDirectory);
-         }
-         
-         unless (-e $outputFile) {
-            print STDERR "Downloading video for $fileName.." . "\n";
-            open (WGET_STREAM, "wget -O $outputFile '$videoURL' 2> /dev/null|");
-         }
-         
-      } else {
+      }
       
+      else {
          print STDERR "Could not open file: $file : $!" . "\n";
+      }
+   }
+   
+   while ((my $videoURL, my $value) = each(%videoURLs)) {
+   
+      my $outputDirectory = $videoURL;
+      
+      my $fileName;
+      if ($outputDirectory =~ /.*\/([0-9]+\.mp4).*/) {
+         $fileName = $1;
+      }
+      
+      if($outputDirectory =~ /.*mp4video\/([0-9]+\/).*/){
+         $outputDirectory = $1;
+      }
+      
+      $outputDirectory = $videoDirectory . $outputDirectory;
+
+      my $outputFile = $outputDirectory . $fileName;
+      
+      unless (-d $outputDirectory) {
+         print STDERR "Creating directory.. $outputDirectory" . "\n";
+         make_path ($outputDirectory);
+      }
+      
+      unless (-e $outputFile) {
+         print STDERR "Downloading video for $outputFile.." . "\n";
+         `wget -O $outputFile '$videoURL' 2> /dev/null`;
       }
    }
 }
