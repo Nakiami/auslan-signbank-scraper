@@ -137,7 +137,7 @@ sub savePageToDisk () {
    
    unless (-e $outputFile) {
       print STDERR "Saving to disk: $url" . "\n";
-      open (WGET_STREAM, "wget -O $outputFile '$url' 2> /dev/null|");
+      `wget -O $outputFile '$url' 2> /dev/null`;
    }
 }
 
@@ -290,7 +290,6 @@ sub downloadVideos () {
          while (my $line = <FILE>) {
             
             if ($line =~ /^video:(.*)/) {
-               #$videoURL = $1;
                $videoURLs{$1}++;
                last;
             }
@@ -302,7 +301,7 @@ sub downloadVideos () {
       }
    }
    
-   while ((my $videoURL, my $value) = each(%videoURLs)) {
+   while ((my $videoURL, my $usedNumTimes) = each(%videoURLs)) {
    
       my $outputDirectory = $videoURL;
       
