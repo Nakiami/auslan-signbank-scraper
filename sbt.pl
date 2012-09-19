@@ -139,6 +139,8 @@ sub savePageToDisk () {
       print STDERR "Saving to disk: $url" . "\n";
       `wget -O $outputFile '$url' 2> /dev/null`;
    }
+   
+   return;
 }
 
 sub extractInfoFromLocalFiles () {
@@ -271,6 +273,8 @@ sub extractInfoFromLocalFiles () {
          print STDERR "Could not open file: $file : $!" . "\n";
       }
    }
+   
+   return;
 }
 
 sub downloadVideos () {
@@ -328,4 +332,6 @@ sub downloadVideos () {
          `wget -O $outputFile '$videoURL' 2> /dev/null`;
       }
    }
+   
+   return;
 }
