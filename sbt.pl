@@ -53,61 +53,91 @@ if (@ARGV >= 3 && $ARGV[0] eq "scrape") {
    }
 }
 
-sub downloadVideos () {
-
-   my($letter) = @_;
-   my %videoURLs;
+sub scrapeLetter () {
+   my ($letter) = @_;
+   my $numPages = 1;
    
-   my $directory = $processedDirectory . lc ($letter) . "/";
-   my @files = <$directory*>;
+   my $url = "http://www.auslan.org.au/dictionary/search/?query=$letter";
    
-   for my $file (@files) {
+   if (open (WGET_STREAM, "wget -O- '$url' 2> /dev/null|")) {
 
-      my $videoURL;
-
-      if (open (FILE, "< $file")) {
-      
-         while (my $line = <FILE>) {
-            
-            if ($line =~ /^video:(.*)/) {
-               #$videoURL = $1;
-               $videoURLs{$1}++;
-               last;
-            }
+      while (my $line = <WGET_STREAM>) {
+         if ($line =~ /query=[A-Z]&page=([0-9]+)'>[0-9]+<\//) {
+            $numPages = $1;
          }
       }
       
-      else {
-         print STDERR "Could not open file: $file : $!" . "\n";
+      print STDERR "$numPages pages for letter $letter" . "\n";
+      
+      for my $pageNum (1..$numPages) {
+         &buildWordList ($letter, $pageNum);
       }
    }
    
-   while ((my $videoURL, my $value) = each(%videoURLs)) {
-   
-      my $outputDirectory = $videoURL;
-      
-      my $fileName;
-      if ($outputDirectory =~ /.*\/([0-9]+\.mp4).*/) {
-         $fileName = $1;
-      }
-      
-      if($outputDirectory =~ /.*mp4video\/([0-9]+\/).*/){
-         $outputDirectory = $1;
-      }
-      
-      $outputDirectory = $videoDirectory . $outputDirectory;
+   return;
+}
 
-      my $outputFile = $outputDirectory . $fileName;
+sub buildWordList () {
+   my ($letter, $page) = @_;
+   
+   print STDERR "Processing letter $letter, page $page.." . "\n";
+
+   my $url = "http://www.auslan.org.au/dictionary/search/?query=$letter&page=$page";
+   
+   if (open (WGET_STREAM, "wget -O- '$url' 2> /dev/null|")) {
+  
+      while (my $line = <WGET_STREAM>) {
       
-      unless (-d $outputDirectory) {
-         print STDERR "Creating directory.. $outputDirectory" . "\n";
-         make_path ($outputDirectory);
+         if ($line =~ /\<a href="\/dictionary\/words\/(.+\-[0-9]+\.html)">(.+)<\/a>/gi) {
+
+            $words{$2} = $1;
+         }
+      }
+   }
+   
+   return;
+}
+
+sub scrapeWord () {
+   my ($word, $file) = @_;
+   my $numPages = 1;
+
+   my $url = "http://www.auslan.org.au/dictionary/words/$file";
+   
+   if (open (WGET_STREAM, "wget -O- '$url' 2> /dev/null|")) {
+
+      while (my $line = <WGET_STREAM>) {
+         if ($line =~ /<span class=['"]match['"]><a href=['"]$word-([0-9]+).html['"]>[0-9]+<\/a><\/span>/) {
+            $numPages = $1;
+         }
       }
       
-      unless (-e $outputFile) {
-         print STDERR "Downloading video for $outputFile.." . "\n";
-         `wget -O $outputFile '$videoURL' 2> /dev/null`;
+      print STDERR "$numPages for word $word" . "\n";
+      
+      for my $pageNum (1..$numPages) {
+         &savePageToDisk("$word-$pageNum.html");
       }
+   }
+   
+   return;
+}
+
+sub savePageToDisk () {
+   my ($file) = @_;
+   my $url = "http://www.auslan.org.au/dictionary/words/$file";
+   my $directory = $wordsDirectory . lc (substr ($file, 0, 1))."/";
+   my $outputFile = "$directory/$file";
+   
+   $outputFile =~ s/\s+/_/gi;
+   
+   unless (-d $directory) {
+      print STDERR "Creating directory.. $directory" . "\n";
+      make_path ($directory);
+   }
+   
+   unless (-e $outputFile) {
+      print STDERR "Saving to disk: $url" . "\n";
+      open (WGET_STREAM, "wget -O $outputFile '$url' 2> /dev/null|");
    }
 }
 
@@ -243,90 +273,60 @@ sub extractInfoFromLocalFiles () {
    }
 }
 
-sub scrapeLetter () {
-   my ($letter) = @_;
-   my $numPages = 1;
-   
-   my $url = "http://www.auslan.org.au/dictionary/search/?query=$letter";
-   
-   if (open (WGET_STREAM, "wget -O- '$url' 2> /dev/null|")) {
+sub downloadVideos () {
 
-      while (my $line = <WGET_STREAM>) {
-         if ($line =~ /query=[A-Z]&page=([0-9]+)'>[0-9]+<\//) {
-            $numPages = $1;
+   my($letter) = @_;
+   my %videoURLs;
+   
+   my $directory = $processedDirectory . lc ($letter) . "/";
+   my @files = <$directory*>;
+   
+   for my $file (@files) {
+
+      my $videoURL;
+
+      if (open (FILE, "< $file")) {
+      
+         while (my $line = <FILE>) {
+            
+            if ($line =~ /^video:(.*)/) {
+               #$videoURL = $1;
+               $videoURLs{$1}++;
+               last;
+            }
          }
       }
       
-      print STDERR "$numPages pages for letter $letter" . "\n";
-      
-      for my $pageNum (1..$numPages) {
-         &buildWordList ($letter, $pageNum);
+      else {
+         print STDERR "Could not open file: $file : $!" . "\n";
       }
    }
    
-   return;
-}
-
-sub buildWordList () {
-   my ($letter, $page) = @_;
+   while ((my $videoURL, my $value) = each(%videoURLs)) {
    
-   print STDERR "Processing letter $letter, page $page.." . "\n";
-
-   my $url = "http://www.auslan.org.au/dictionary/search/?query=$letter&page=$page";
-   
-   if (open (WGET_STREAM, "wget -O- '$url' 2> /dev/null|")) {
-  
-      while (my $line = <WGET_STREAM>) {
+      my $outputDirectory = $videoURL;
       
-         if ($line =~ /\<a href="\/dictionary\/words\/(.+\-[0-9]+\.html)">(.+)<\/a>/gi) {
-
-            $words{$2} = $1;
-         }
-      }
-   }
-   
-   return;
-}
-
-sub scrapeWord () {
-   my ($word, $file) = @_;
-   my $numPages = 1;
-
-   my $url = "http://www.auslan.org.au/dictionary/words/$file";
-   
-   if (open (WGET_STREAM, "wget -O- '$url' 2> /dev/null|")) {
-
-      while (my $line = <WGET_STREAM>) {
-         if ($line =~ /<span class=['"]match['"]><a href=['"]$word-([0-9]+).html['"]>[0-9]+<\/a><\/span>/) {
-            $numPages = $1;
-         }
+      my $fileName;
+      if ($outputDirectory =~ /.*\/([0-9]+\.mp4).*/) {
+         $fileName = $1;
       }
       
-      print STDERR "$numPages for word $word" . "\n";
-      
-      for my $pageNum (1..$numPages) {
-         &savePageToDisk("$word-$pageNum.html");
+      if($outputDirectory =~ /.*mp4video\/([0-9]+\/).*/){
+         $outputDirectory = $1;
       }
-   }
-   
-   return;
-}
+      
+      $outputDirectory = $videoDirectory . $outputDirectory;
 
-sub savePageToDisk () {
-   my ($file) = @_;
-   my $url = "http://www.auslan.org.au/dictionary/words/$file";
-   my $directory = $wordsDirectory . lc (substr ($file, 0, 1))."/";
-   my $outputFile = "$directory/$file";
-   
-   $outputFile =~ s/\s+/_/gi;
-   
-   unless (-d $directory) {
-      print STDERR "Creating directory.. $directory" . "\n";
-      make_path ($directory);
-   }
-   
-   unless (-e $outputFile) {
-      print STDERR "Saving to disk: $url" . "\n";
-      open (WGET_STREAM, "wget -O $outputFile '$url' 2> /dev/null|");
+      my $outputFile = $outputDirectory . $fileName;
+      
+      unless (-d $outputDirectory) {
+         print STDERR "Creating directory.. $outputDirectory" . "\n";
+         make_path ($outputDirectory);
+      }
+      
+      unless (-e $outputFile) {
+         print STDERR "Downloading video for $outputFile.." . "\n";
+         `wget -O $outputFile '$videoURL' 2> /dev/null`;
+      }
    }
 }
