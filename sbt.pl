@@ -6,7 +6,7 @@ use File::Path qw(make_path remove_tree);
 # sign bank tools, Nakiami
 
 my %words;
-my $wordsDirectory = "words/";
+my $signDirectory = "signs/";
 my $processedDirectory = "processed/";
 my $videoDirectory = "videos/";
 my $forceRedo = 0;
@@ -124,8 +124,8 @@ sub scrapeWord () {
 
 sub savePageToDisk () {
    my ($file) = @_;
-   my $url = "http://www.auslan.org.au/dictionary/words/$file";
-   my $directory = $wordsDirectory . lc (substr ($file, 0, 1))."/";
+   my $url = "http://www.auslan.org.au/dictionary/signs/$file";
+   my $directory = $signDirectory . lc (substr ($file, 0, 1))."/";
    my $outputFile = "$directory/$file";
    
    $outputFile =~ s/\s+/_/gi;
@@ -146,7 +146,7 @@ sub savePageToDisk () {
 sub extractInfoFromLocalFiles () {
 
    my($letter) = @_;
-   my $directory = $wordsDirectory . lc ($letter) . "/";
+   my $directory = $signDirectory . lc ($letter) . "/";
    my @files = <$directory*>;
    
    for my $file (@files) {
@@ -232,7 +232,7 @@ sub extractInfoFromLocalFiles () {
          }
          
          my $fileName = $file;
-         $fileName =~ s/$wordsDirectory//;
+         $fileName =~ s/$signDirectory//;
          my $outputDirectory = $processedDirectory . substr($fileName, 0, 1)."/";
          my $outputFile = $processedDirectory . $fileName;
          $outputFile =~ s/\.html$//;
