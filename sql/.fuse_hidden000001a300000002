@@ -1,0 +1,66 @@
+/*
+  Definitions of signs.
+  type is an enum { noun, verbOrAdjective }
+*/
+CREATE TABLE IF NOT EXISTS definitions (
+  id INTEGER unsigned NOT NULL AUTO_INCREMENT,
+  type INTEGER unsigned NOT NULL,
+  definition text NOT NULL,
+  PRIMARY KEY (id)
+) DEFAULT CHARSET=latin1 AUTO_INCREMENT=1 ;
+
+/*
+  Video URLs
+*/
+CREATE TABLE IF NOT EXISTS videos (
+  id INTEGER unsigned NOT NULL AUTO_INCREMENT,
+  video text NOT NULL,
+  PRIMARY KEY (id)
+) DEFAULT CHARSET=latin1 AUTO_INCREMENT=1 ;
+
+/*
+  All the different signs. There can be many different signs for every word.
+  For example, "about" has six signs.
+  Every sign usually has a different video. Every sign has different keywords.
+  distribution is an enum { All States, Northern Dialect, Southern Dialect, N/A }
+*/
+CREATE TABLE IF NOT EXISTS signs (
+  id INTEGER unsigned NOT NULL AUTO_INCREMENT,
+  sign text NOT NULL,
+  distribution INTEGER unsigned NOT NULL,
+  PRIMARY KEY (id)
+) DEFAULT CHARSET=latin1 AUTO_INCREMENT=1 ;
+
+/*
+  Links tables "signs" and "definitions".
+  Each word can have more than one definition.
+  Each definition can have more than one word.
+  Many words share definitions.
+*/
+CREATE TABLE IF NOT EXISTS sign_definition (
+  sign INTEGER unsigned NOT NULL,
+  definition INTEGER unsigned NOT NULL,
+  UNIQUE KEY word_definition (sign,definition)
+) DEFAULT CHARSET=latin1;
+
+/*
+  Links table "signs" to itself to create "keyword"
+  relationships.
+  Each word can have many keywords.
+*/
+CREATE TABLE IF NOT EXISTS sign_links (
+  link INTEGER unsigned NOT NULL,
+  sign INTEGER unsigned NOT NULL,
+  UNIQUE KEY keyword_word (link,sign)
+) DEFAULT CHARSET=latin1;
+
+/*
+  Links tables "signs" to "videos".
+  Each sign has one video.
+  Each video can have many words.
+*/
+CREATE TABLE IF NOT EXISTS sign_video (
+  sign INTEGER unsigned NOT NULL,
+  video INTEGER unsigned NOT NULL,
+  UNIQUE KEY word_video (sign,video)
+) DEFAULT CHARSET=latin1;

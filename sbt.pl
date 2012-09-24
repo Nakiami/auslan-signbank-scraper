@@ -1,19 +1,27 @@
 #!/usr/bin/perl
 use warnings;
 use strict;
+use DBI;
 use File::Path qw(make_path remove_tree);
 
 # sign bank tools, Nakiami
 
 my %words;
+my %enums;
+my %videos;
+my %definitions;
+   
 my $signDirectory = "signs/";
 my $processedDirectory = "processed/";
 my $videoDirectory = "videos/";
 my $sqlDirectory = "sql/";
+my $databaseFile = "sb.db";
 my $forceRedo = 0;
 
+&buildEnums();
+
 if (@ARGV < 2) {
-   print STDERR "Usage: ./xx [scrape|processFiles|downloadVideos] [a-z] [a-z] [printWordsOnly]" . "\n";
+   print STDERR "Usage: ./xx [scrape|processFiles|downloadVideos|populateDatabase] [a-z] [a-z] [printWordsOnly]" . "\n";
    exit (1);
 }
 
@@ -58,7 +66,7 @@ elsif (@ARGV >= 3 && $ARGV[0] eq "downloadVideos") {
    }
 }
 
-elsif (@ARGV >= 3 && $ARGV[0] eq "createSQL") {
+elsif (@ARGV >= 3 && $ARGV[0] eq "populateDatabase") {
 
    unless (-d $processedDirectory) {
       print STDERR "You don't have any files in your processed directory!";
@@ -66,8 +74,15 @@ elsif (@ARGV >= 3 && $ARGV[0] eq "createSQL") {
    }
 
    for my $letter ($ARGV[1]..$ARGV[2]) {
-      print STDERR "Processing ". $letter . "\n";
-      &createSQL ($letter);
+      print STDERR "Populating database: ". $letter . "\n";
+      &populateDatabase ($letter);
+   }
+   
+   &writeGlobalsToDatabase();
+   
+   for my $letter ($ARGV[1]..$ARGV[2]) {
+      print STDERR "Linking database entries: ". $letter . "\n";
+      &linkDatabaseEntries ($letter);
    }
 }
 
@@ -80,7 +95,7 @@ sub scrapeLetter () {
    if (open (WGET_STREAM, "wget -O- '$url' 2> /dev/null|")) {
 
       while (my $line = <WGET_STREAM>) {
-         if ($line =~ /query=[A-Z]&page=([0-9]+)'>[0-9]+<\//) {
+         if ($line =~ /query=[A-Z]&page=([0-9]+)'>[0-9]+<\//i) {
             $numPages = $1;
          }
       }
@@ -103,11 +118,8 @@ sub buildWordList () {
    my $url = "http://www.auslan.org.au/dictionary/search/?query=$letter&page=$page";
    
    if (open (WGET_STREAM, "wget -O- '$url' 2> /dev/null|")) {
-  
       while (my $line = <WGET_STREAM>) {
-      
          if ($line =~ /\<a href="\/dictionary\/words\/(.+\-[0-9]+\.html)">(.+)<\/a>/gi) {
-
             $words{$2} = $1;
          }
       }
@@ -142,7 +154,7 @@ sub scrapeWord () {
 
 sub savePageToDisk () {
    my ($file) = @_;
-   my $url = "http://www.auslan.org.au/dictionary/signs/$file";
+   my $url = "http://www.auslan.org.au/dictionary/words/$file";
    my $directory = $signDirectory . lc (substr ($file, 0, 1))."/";
    my $outputFile = "$directory/$file";
    
@@ -171,7 +183,7 @@ sub extractInfoFromLocalFiles () {
 
       my $videoURL = "N/A";
       my $signDistribution = "N/A";
-      my %keyWords;
+      my %keywords;
       my %nounDef;
       my %verbOrAdjectiveDef;
 
@@ -204,8 +216,8 @@ sub extractInfoFromLocalFiles () {
                   $line =~ s/^\s*//;
                   $line =~ s/\s*$//;
                   
-                  if ($line =~ /^([a-z0-9_\s]+)/gi) {
-                     $keyWords{$1}++;
+                  if ($line =~ /^([a-z0-9_\s]+),/gi) {
+                     $keywords{$1}++;
                   }
                   
                   last if $line =~ /<\/p>/;
@@ -265,11 +277,11 @@ sub extractInfoFromLocalFiles () {
             print STDERR "Saving to disk information from: $file" . "\n";
             if (open (OUTPUTFILE, "> $outputFile")) {
             
-               print OUTPUTFILE "video:" . $videoURL . "\n";
                print OUTPUTFILE "signDistribution:" . $signDistribution . "\n";
+               print OUTPUTFILE "video:" . $videoURL . "\n";
                
-               for my $key (keys (%keyWords)) {
-                  print OUTPUTFILE "keyWord:" . $key . "\n";
+               for my $key (keys (%keywords)) {
+                  print OUTPUTFILE "keyword:" . $key . "\n";
                }
                
                for my $key (keys (%nounDef)) {
@@ -354,21 +366,14 @@ sub downloadVideos () {
    return;
 }
 
-=pod
-sub createSQL () {
-
+sub populateDatabase () {
    my($letter) = @_;
    my $directory = $processedDirectory . lc ($letter) . "/";
    my @files = <$directory*>;
    
-   my $signID = 1;
-   my $definitionID = 1;
-   my $videoID = 1;
+   my $dbh = DBI->connect("dbi:SQLite:dbname=".$sqlDirectory.$databaseFile, "", "", { RaiseError => 1 } ) or die $DBI::errstr;
    
-   my %videoURLs;
-   my %signs;
-   my %signVideo;
-  
+   # make basic entries
    for my $file (@files) {
 
       my $videoURL;
@@ -376,22 +381,25 @@ sub createSQL () {
       if ($fileName =~ /.*\/([^\/]*)$/) {
          $fileName = $1;
       }
+      
+      print STDERR "Inserting " . $fileName . "\n";
 
       if (open (FILE, "< $file")) {
       
-         if (!$signs{$fileName}) {
-            $signs{$fileName} = $signID;
-            $signID++;
-         }
-      
          while (my $line = <FILE>) {
          
-            if ($line =~ /^video:(.*)/) {
-               if (!$videoURLs{$1}){
-                  $videoURLs{$1} = $videoID;
-                  $signVideo{$signs{$fileName}} = $videoID;
-                  $videoID++;
-               }
+            # signDistribution will always be first in the file
+            if ($line =~ /^signDistribution:(.*)/) {
+               $dbh->do("INSERT INTO signs (sign, distribution) VALUES ('$fileName', " . &stringToEnum($1) . ")");
+            }
+            
+            elsif ($line =~ /^video:(.*)/) {
+               $videos{$1}++;
+            }
+            
+            # we assume that no noun definition will be the same as a verbOrAdjective definition
+            elsif ($line =~ /^(noun|verbOrAdjective):(.*)/) {
+               $definitions{$2} = &stringToEnum ($1);
             }
          }
       }
@@ -401,10 +409,110 @@ sub createSQL () {
       }
    }
    
-   while ((my $key, my $value) = each(%videoURLs)) {
-      print $key . " " . $value . "\n";
+   $dbh->disconnect();
+   
+   return;
+}
+
+sub writeGlobalsToDatabase () {
+
+   my $dbh = DBI->connect("dbi:SQLite:dbname=".$sqlDirectory.$databaseFile, "", "", { RaiseError => 1 } ) or die $DBI::errstr;
+
+   # make sure we don't have any duplicate videos
+   for my $video (keys (%videos)) {
+      $dbh->do("INSERT INTO videos (video) VALUES ('$video')");
    }
    
-  return;
+   while ((my $definition, my $type) = each (%definitions)) {
+      $dbh->do("INSERT INTO definitions (type, definition) VALUES ($type, '$definition')");
+   }
+   
+   $dbh->disconnect();
+
+   return;
 }
-=cut
+
+sub linkDatabaseEntries () {
+   my($letter) = @_;
+   my $directory = $processedDirectory . lc ($letter) . "/";
+   my @files = <$directory*>;
+   
+   my $dbh = DBI->connect("dbi:SQLite:dbname=".$sqlDirectory.$databaseFile, "", "", { RaiseError => 1 } ) or die $DBI::errstr;
+
+   # make links between entries
+   for my $file (@files) {
+
+      my $videoURL;
+      my $fileName = $file;
+      if ($fileName =~ /.*\/([^\/]*)$/) {
+         $fileName = $1;
+      }
+      
+      my $sth = $dbh->prepare("SELECT id FROM signs WHERE sign = '" . $fileName . "'");
+      $sth->execute();
+      my $signID = $sth->fetch();
+
+      if (open (FILE, "< $file")) {
+      
+         while (my $line = <FILE>) {
+         
+            if ($line =~ /^video:(.*)/) {
+            
+               my $sth = $dbh->prepare("SELECT id FROM videos WHERE video = '" . $1 . "'");
+               $sth->execute();
+               my $videoID = $sth->fetch();
+               
+               $dbh->do("INSERT INTO sign_video (sign, video) VALUES (@$signID, @$videoID)");
+            }
+         
+            elsif ($line =~ /^keyword:(.*)/) {
+               my $keyword = $1;
+               $keyword =~ tr/ /_/;
+               
+               my $sth = $dbh->prepare("SELECT id FROM signs WHERE sign LIKE ('".$keyword."-_')");
+               $sth->execute();
+               
+               while (my $row = $sth->fetch()) {
+                  $dbh->do("INSERT OR IGNORE INTO sign_links (link, sign) VALUES (@$row, @$signID)");
+               }
+            }
+            
+            elsif ($line =~ /^(noun|verbOrAdjective):(.*)/) {
+               my $sth = $dbh->prepare("SELECT id FROM definitions WHERE definition = '" . $2 . "'");
+               $sth->execute();
+               my $definitionID = $sth->fetch();
+               
+               $dbh->do("INSERT INTO sign_definition (sign, definition) VALUES (@$signID, @$definitionID)");
+            }
+         }
+      }
+      
+      else {
+         print STDERR "Could not open file: $file : $!" . "\n";
+      }
+   }
+   
+   $dbh->disconnect();
+   
+   return;
+}
+
+sub stringToEnum () {
+   my($string) = @_;
+   return $enums{$string};
+}
+
+sub buildEnums () {
+   $enums{"N/A"} = -1;
+   $enums{"All States"} = 0;
+   $enums{"Northern Dialect"} = 1;
+   $enums{"Southern Dialect"} = 2;
+   $enums{"South Australia"} = 3;
+   $enums{"Victoria"} = 4;
+   $enums{"New South Wales"} = 5;
+   $enums{"Northern Territory"} = 6;
+   $enums{"Tasmania"} = 7;
+   
+   $enums{"noun"} = 0;
+   $enums{"verbOrAdjective"} = 1;
+}
