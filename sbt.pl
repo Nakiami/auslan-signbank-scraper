@@ -9,6 +9,7 @@ my %words;
 my $signDirectory = "signs/";
 my $processedDirectory = "processed/";
 my $videoDirectory = "videos/";
+my $sqlDirectory = "sql/";
 my $forceRedo = 0;
 
 if (@ARGV < 2) {
@@ -33,23 +34,40 @@ if (@ARGV >= 3 && $ARGV[0] eq "scrape") {
       }
    }
    
-} elsif (@ARGV >= 3 && $ARGV[0] eq "processFiles") {
+}
+
+elsif (@ARGV >= 3 && $ARGV[0] eq "processFiles") {
 
    for my $letter ($ARGV[1]..$ARGV[2]) {
       print STDERR "Processing ". $letter . "\n";
       &extractInfoFromLocalFiles ($letter);
    }
    
-} elsif (@ARGV >= 3 && $ARGV[0] eq "downloadVideos") {
+}
+
+elsif (@ARGV >= 3 && $ARGV[0] eq "downloadVideos") {
 
    unless (-d $processedDirectory) {
-      print STDERR "You don't have any files in your output directory!";
+      print STDERR "You don't have any files in your processed directory!";
       exit (1);
    }
 
    for my $letter ($ARGV[1]..$ARGV[2]) {
       print STDERR "Processing ". $letter . "\n";
       &downloadVideos ($letter);
+   }
+}
+
+elsif (@ARGV >= 3 && $ARGV[0] eq "createSQL") {
+
+   unless (-d $processedDirectory) {
+      print STDERR "You don't have any files in your processed directory!";
+      exit (1);
+   }
+
+   for my $letter ($ARGV[1]..$ARGV[2]) {
+      print STDERR "Processing ". $letter . "\n";
+      &createSQL ($letter);
    }
 }
 
@@ -335,3 +353,58 @@ sub downloadVideos () {
    
    return;
 }
+
+=pod
+sub createSQL () {
+
+   my($letter) = @_;
+   my $directory = $processedDirectory . lc ($letter) . "/";
+   my @files = <$directory*>;
+   
+   my $signID = 1;
+   my $definitionID = 1;
+   my $videoID = 1;
+   
+   my %videoURLs;
+   my %signs;
+   my %signVideo;
+  
+   for my $file (@files) {
+
+      my $videoURL;
+      my $fileName = $file;
+      if ($fileName =~ /.*\/([^\/]*)$/) {
+         $fileName = $1;
+      }
+
+      if (open (FILE, "< $file")) {
+      
+         if (!$signs{$fileName}) {
+            $signs{$fileName} = $signID;
+            $signID++;
+         }
+      
+         while (my $line = <FILE>) {
+         
+            if ($line =~ /^video:(.*)/) {
+               if (!$videoURLs{$1}){
+                  $videoURLs{$1} = $videoID;
+                  $signVideo{$signs{$fileName}} = $videoID;
+                  $videoID++;
+               }
+            }
+         }
+      }
+      
+      else {
+         print STDERR "Could not open file: $file : $!" . "\n";
+      }
+   }
+   
+   while ((my $key, my $value) = each(%videoURLs)) {
+      print $key . " " . $value . "\n";
+   }
+   
+  return;
+}
+=cut
