@@ -2,6 +2,7 @@
 use warnings;
 use strict;
 use DBI;
+use DBIx::MultiStatementDo;
 use File::Path qw(make_path remove_tree);
 
 # sign bank tools, Nakiami
@@ -14,14 +15,16 @@ my %definitions;
 my $signDirectory = "signs/";
 my $processedDirectory = "processed/";
 my $videoDirectory = "videos/";
-my $sqlDirectory = "sql/";
-my $databaseFile = "sb.db";
-my $forceRedo = 0;
+
+my $dbDirectory = "db/";
+my $dbFile = "sb.db";
+my $dbStructureFile = "structure.sql";
+my $dbh;
 
 &buildEnums();
 
 if (@ARGV < 2) {
-   print STDERR "Usage: ./xx [scrape|processFiles|downloadVideos|populateDatabase] [a-z] [a-z] [printWordsOnly]" . "\n";
+   print STDERR "Usage: ./xx [scrape|process|videos|db] [a-z] [a-z] [printOnly]" . "\n";
    exit (1);
 }
 
@@ -33,18 +36,18 @@ if (@ARGV >= 3 && $ARGV[0] eq "scrape") {
    }
    
    # download all of the files
-   while ((my $key, my $value) = each(%words)) {
+   for my $key (sort ( keys (%words))) {
    
-      if (@ARGV == 4 && $ARGV[3] eq "printWordsOnly") {
+      if (@ARGV == 4 && $ARGV[3] eq "printOnly") {
          print $key . "\n";
       } else {
-         &scrapeWord ($key, $value);
+         &scrapeWord ($key, $words{$key});
       }
    }
    
 }
 
-elsif (@ARGV >= 3 && $ARGV[0] eq "processFiles") {
+elsif (@ARGV >= 3 && $ARGV[0] eq "process") {
 
    for my $letter ($ARGV[1]..$ARGV[2]) {
       print STDERR "Processing ". $letter . "\n";
@@ -53,10 +56,10 @@ elsif (@ARGV >= 3 && $ARGV[0] eq "processFiles") {
    
 }
 
-elsif (@ARGV >= 3 && $ARGV[0] eq "downloadVideos") {
+elsif (@ARGV >= 3 && $ARGV[0] eq "videos") {
 
    unless (-d $processedDirectory) {
-      print STDERR "You don't have any files in your processed directory!";
+      print STDERR "You don't have any files in your processed directory!" . "\n";
       exit (1);
    }
 
@@ -66,24 +69,44 @@ elsif (@ARGV >= 3 && $ARGV[0] eq "downloadVideos") {
    }
 }
 
-elsif (@ARGV >= 3 && $ARGV[0] eq "populateDatabase") {
+elsif (@ARGV >= 3 && $ARGV[0] eq "db") {
 
    unless (-d $processedDirectory) {
-      print STDERR "You don't have any files in your processed directory!";
+      print STDERR "You don't have any files in your processed directory!" . "\n";
       exit (1);
    }
-
-   for my $letter ($ARGV[1]..$ARGV[2]) {
-      print STDERR "Populating database: ". $letter . "\n";
-      &populateDatabase ($letter);
+   
+   unless (-f $dbDirectory.$dbStructureFile) {
+      print STDERR "You don't have a database structure file!" . "\n";
+      exit (1);
    }
    
-   &writeGlobalsToDatabase();
+   if (-f $dbDirectory.$dbFile) {
+      print STDERR "Database output file already exists! Move or delete it before proceeding." . "\n";
+      exit (1);
+   }
+   
+   # create our database in memory for faster processing
+   $dbh = DBI->connect("dbi:SQLite:dbname=:memory:", "", "", { RaiseError => 1 } ) or die $DBI::errstr;
+   
+   &executeSQLFromFile ($dbDirectory.$dbStructureFile);
+
+   for my $letter ($ARGV[1]..$ARGV[2]) {
+      print STDERR "Generating database entries: ". $letter . "\n";
+      &generateEntries ($letter);
+   }
+   
+   print STDERR "Writing entries to database.." . "\n";
+   &writeEntriesToDatabase();
    
    for my $letter ($ARGV[1]..$ARGV[2]) {
       print STDERR "Linking database entries: ". $letter . "\n";
       &linkDatabaseEntries ($letter);
    }
+   
+   # write db from memory to disk
+   $dbh->sqlite_backup_to_file($dbDirectory.$dbFile);
+   $dbh->disconnect();
 }
 
 sub scrapeLetter () {
@@ -123,6 +146,8 @@ sub buildWordList () {
             $words{$2} = $1;
          }
       }
+      
+      close(WGET_STREAM);
    }
    
    return;
@@ -142,11 +167,13 @@ sub scrapeWord () {
          }
       }
       
-      print STDERR "$numPages for word $word" . "\n";
+      print STDERR "$numPages for sign $word" . "\n";
       
       for my $pageNum (1..$numPages) {
          &savePageToDisk("$word-$pageNum.html");
       }
+      
+      close(WGET_STREAM);
    }
    
    return;
@@ -156,9 +183,10 @@ sub savePageToDisk () {
    my ($file) = @_;
    my $url = "http://www.auslan.org.au/dictionary/words/$file";
    my $directory = $signDirectory . lc (substr ($file, 0, 1))."/";
-   my $outputFile = "$directory/$file";
+   my $outputFile = $directory.$file;
    
    $outputFile =~ s/\s+/_/gi;
+   $outputFile =~ s/[^a-z0-9_\:\-\.\/]//gi; #FIXME ugly, doesn't get the words properly. Special chars mess up.
    
    unless (-d $directory) {
       print STDERR "Creating directory.. $directory" . "\n";
@@ -166,8 +194,12 @@ sub savePageToDisk () {
    }
    
    unless (-e $outputFile) {
-      print STDERR "Saving to disk: $url" . "\n";
+      print STDERR "Saving $url to disk: $outputFile" . "\n";
       `wget -O $outputFile '$url' 2> /dev/null`;
+   }
+   
+   else {
+      print STDERR $outputFile . " already exists locally. Skipping.." . "\n";
    }
    
    return;
@@ -291,12 +323,16 @@ sub extractInfoFromLocalFiles () {
                for my $key (keys (%verbOrAdjectiveDef)) {
                   print OUTPUTFILE "verbOrAdjective:" . $key . "\n";
                }
+               
+               close(OUTPUTFILE);
             
             } else {
             
                print STDERR "Could not open file: $file : $!" . "\n";
             }
          }
+         
+         close(FILE);
          
       } else {
       
@@ -328,6 +364,8 @@ sub downloadVideos () {
                last;
             }
          }
+         
+         close(FILE);
       }
       
       else {
@@ -366,12 +404,10 @@ sub downloadVideos () {
    return;
 }
 
-sub populateDatabase () {
+sub generateEntries () {
    my($letter) = @_;
    my $directory = $processedDirectory . lc ($letter) . "/";
    my @files = <$directory*>;
-   
-   my $dbh = DBI->connect("dbi:SQLite:dbname=".$sqlDirectory.$databaseFile, "", "", { RaiseError => 1 } ) or die $DBI::errstr;
    
    # make basic entries
    for my $file (@files) {
@@ -381,8 +417,6 @@ sub populateDatabase () {
       if ($fileName =~ /.*\/([^\/]*)$/) {
          $fileName = $1;
       }
-      
-      print STDERR "Inserting " . $fileName . "\n";
 
       if (open (FILE, "< $file")) {
       
@@ -390,7 +424,7 @@ sub populateDatabase () {
          
             # signDistribution will always be first in the file
             if ($line =~ /^signDistribution:(.*)/) {
-               $dbh->do("INSERT INTO signs (sign, distribution) VALUES ('$fileName', " . &stringToEnum($1) . ")");
+               $words{$fileName} = &stringToEnum($1);
             }
             
             elsif ($line =~ /^video:(.*)/) {
@@ -402,6 +436,8 @@ sub populateDatabase () {
                $definitions{$2} = &stringToEnum ($1);
             }
          }
+         
+         close(FILE);
       }
       
       else {
@@ -409,25 +445,28 @@ sub populateDatabase () {
       }
    }
    
-   $dbh->disconnect();
-   
    return;
 }
 
-sub writeGlobalsToDatabase () {
+sub writeEntriesToDatabase () {
 
-   my $dbh = DBI->connect("dbi:SQLite:dbname=".$sqlDirectory.$databaseFile, "", "", { RaiseError => 1 } ) or die $DBI::errstr;
-
-   # make sure we don't have any duplicate videos
+   print STDERR "Writing signs.." . "\n";
+   while ((my $word, my $distribution) = each (%words)) {
+      my $sth = $dbh->prepare("INSERT OR IGNORE INTO signs (sign, distribution) VALUES (?, ?)");
+      $sth->execute($word, $distribution);
+   }
+   
+   print STDERR "Writing videos.." . "\n";
    for my $video (keys (%videos)) {
-      $dbh->do("INSERT INTO videos (video) VALUES ('$video')");
+      my $sth = $dbh->prepare("INSERT OR IGNORE INTO videos (video) VALUES (?)");
+      $sth->execute($video);
    }
    
+   print STDERR "Writing definitions.." . "\n";
    while ((my $definition, my $type) = each (%definitions)) {
-      $dbh->do("INSERT INTO definitions (type, definition) VALUES ($type, '$definition')");
+      my $sth = $dbh->prepare("INSERT OR IGNORE INTO definitions (type, definition) VALUES (?, ?)");
+      $sth->execute($type, $definition);
    }
-   
-   $dbh->disconnect();
 
    return;
 }
@@ -437,8 +476,6 @@ sub linkDatabaseEntries () {
    my $directory = $processedDirectory . lc ($letter) . "/";
    my @files = <$directory*>;
    
-   my $dbh = DBI->connect("dbi:SQLite:dbname=".$sqlDirectory.$databaseFile, "", "", { RaiseError => 1 } ) or die $DBI::errstr;
-
    # make links between entries
    for my $file (@files) {
 
@@ -448,8 +485,8 @@ sub linkDatabaseEntries () {
          $fileName = $1;
       }
       
-      my $sth = $dbh->prepare("SELECT id FROM signs WHERE sign = '" . $fileName . "'");
-      $sth->execute();
+      my $sth = $dbh->prepare("SELECT id FROM signs WHERE sign = ?");
+      $sth->execute($fileName);
       my $signID = $sth->fetch();
 
       if (open (FILE, "< $file")) {
@@ -458,33 +495,40 @@ sub linkDatabaseEntries () {
          
             if ($line =~ /^video:(.*)/) {
             
-               my $sth = $dbh->prepare("SELECT id FROM videos WHERE video = '" . $1 . "'");
-               $sth->execute();
+               my $sth = $dbh->prepare("SELECT id FROM videos WHERE video = ?");
+               $sth->execute($1);
                my $videoID = $sth->fetch();
                
-               $dbh->do("INSERT INTO sign_video (sign, video) VALUES (@$signID, @$videoID)");
+               $sth = $dbh->prepare("INSERT OR IGNORE INTO sign_video (sign, video) VALUES (?, ?)");
+               $sth->execute(@$signID, @$videoID);
             }
          
             elsif ($line =~ /^keyword:(.*)/) {
                my $keyword = $1;
                $keyword =~ tr/ /_/;
+               $keyword =~ s/[^a-z0-9_\:\-\.\/]//gi; #FIXME ugly, doesn't get the words properly
                
-               my $sth = $dbh->prepare("SELECT id FROM signs WHERE sign LIKE ('".$keyword."-_')");
-               $sth->execute();
+               #TODO remove the vice-versa links!
+               my $sth = $dbh->prepare("SELECT id FROM signs WHERE sign LIKE (?)");
+               $sth->execute($keyword."-1");
                
                while (my $row = $sth->fetch()) {
-                  $dbh->do("INSERT OR IGNORE INTO sign_links (link, sign) VALUES (@$row, @$signID)");
+                  my $sth = $dbh->prepare("INSERT OR IGNORE INTO sign_links (link, sign) VALUES (?, ?)");
+                  $sth->execute(@$row, @$signID);
                }
             }
             
             elsif ($line =~ /^(noun|verbOrAdjective):(.*)/) {
-               my $sth = $dbh->prepare("SELECT id FROM definitions WHERE definition = '" . $2 . "'");
-               $sth->execute();
+               my $sth = $dbh->prepare("SELECT id FROM definitions WHERE definition = ?");
+               $sth->execute($2);
                my $definitionID = $sth->fetch();
                
-               $dbh->do("INSERT INTO sign_definition (sign, definition) VALUES (@$signID, @$definitionID)");
+               $sth = $dbh->prepare("INSERT OR IGNORE INTO sign_definition (sign, definition) VALUES (?, ?)");
+               $sth->execute(@$signID, @$definitionID);
             }
          }
+         
+         close(FILE);
       }
       
       else {
@@ -492,9 +536,18 @@ sub linkDatabaseEntries () {
       }
    }
    
-   $dbh->disconnect();
-   
    return;
+}
+
+sub executeSQLFromFile {
+   open (FILE, shift) or die ("Can't open SQL File for reading");
+   my @lines = <FILE>;
+   my $SQL = join(" ", @lines); 
+   close(FILE);
+
+   # Multiple SQL statements in a single call   
+   my $batch = DBIx::MultiStatementDo->new( dbh => $dbh );
+   my @results = $batch->do($SQL) or die $batch->dbh->errstr;
 }
 
 sub stringToEnum () {
@@ -512,6 +565,8 @@ sub buildEnums () {
    $enums{"New South Wales"} = 5;
    $enums{"Northern Territory"} = 6;
    $enums{"Tasmania"} = 7;
+   $enums{"Queensland"} = 8;
+   $enums{"Western Australia"} = 9;
    
    $enums{"noun"} = 0;
    $enums{"verbOrAdjective"} = 1;
