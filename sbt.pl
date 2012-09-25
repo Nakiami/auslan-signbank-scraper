@@ -451,21 +451,21 @@ sub generateEntries () {
 sub writeEntriesToDatabase () {
 
    print STDERR "Writing signs.." . "\n";
-   while ((my $word, my $distribution) = each (%words)) {
+   for my $word (sort (keys (%words))) {
       my $sth = $dbh->prepare("INSERT OR IGNORE INTO signs (sign, distribution) VALUES (?, ?)");
-      $sth->execute($word, $distribution);
+      $sth->execute($word, $words{$word});
    }
    
    print STDERR "Writing videos.." . "\n";
-   for my $video (keys (%videos)) {
+   for my $video (sort (keys (%videos))) {
       my $sth = $dbh->prepare("INSERT OR IGNORE INTO videos (video) VALUES (?)");
       $sth->execute($video);
    }
    
    print STDERR "Writing definitions.." . "\n";
-   while ((my $definition, my $type) = each (%definitions)) {
-      my $sth = $dbh->prepare("INSERT OR IGNORE INTO definitions (type, definition) VALUES (?, ?)");
-      $sth->execute($type, $definition);
+   for my $definition (sort (keys (%definitions))) {
+      my $sth = $dbh->prepare("INSERT OR IGNORE INTO definitions (definition, type) VALUES (?, ?)");
+      $sth->execute($definition, $definitions{$definition});
    }
 
    return;
